@@ -70,13 +70,15 @@ float g_DeslocZ = 1.0f;
 
 class Zombie{
     public:
+        float speed;
         float DeslocX, DeslocY, DeslocZ;
-        Zombie(float x, float z);
+        Zombie(float x, float z, float s);
         void calcLocation();
 
 };
 
-Zombie::Zombie(float x,float z){
+Zombie::Zombie(float x,float z, float s){
+    speed = s;
     DeslocX = x;
     DeslocY = 0.0f;
     DeslocZ = z;
@@ -84,15 +86,15 @@ Zombie::Zombie(float x,float z){
 
 void Zombie::calcLocation(){
     if (DeslocX > g_DeslocX){
-        DeslocX -= 0.01;
+        DeslocX -= speed;
     }else{
-        DeslocX += 0.01;
+        DeslocX += speed;
     }
 
     if (DeslocZ > g_DeslocZ){
-        DeslocZ -= 0.01;
+        DeslocZ -= speed;
     }else{
-        DeslocZ += 0.01;
+        DeslocZ += speed;
     }
 }
 
@@ -112,10 +114,10 @@ bool g_ShowInfoText = true;
 
 int main()
 {
-    zombies.push_back(Zombie(4.0,5.0));
-    zombies.push_back(Zombie(-4.0,-5.0));
-    zombies.push_back(Zombie(2.0,3.0));
-    zombies.push_back(Zombie(1.0,4.0));
+    zombies.push_back(Zombie(4.0,5.0,0.008));
+    zombies.push_back(Zombie(-4.0,-5.0,0.001));
+    zombies.push_back(Zombie(2.0,3.0,0.005));
+    zombies.push_back(Zombie(1.0,4.0,0.003));
 
 
 
@@ -242,7 +244,7 @@ int main()
         glm::mat4 projection;
 
         float nearplane = -0.1f;  
-        float farplane  = -10.0f; 
+        float farplane  = -40.0f; 
 
         float field_of_view = 3.141592 / 3.0f;
         projection = Matrix_Perspective(field_of_view, g_ScreenRatio, nearplane, farplane);
@@ -256,8 +258,10 @@ int main()
             glm::mat4 model;
 
             zombies[i].calcLocation();
-            
+
             model = Matrix_Identity() * Matrix_Translate(zombies[i].DeslocX, zombies[i].DeslocY, zombies[i].DeslocZ);
+
+
 
             glUniformMatrix4fv(model_uniform, 1, GL_FALSE, glm::value_ptr(model));
             glUniform1i(render_as_black_uniform, false);
