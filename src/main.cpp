@@ -254,7 +254,9 @@ int main()
         for(int i = 0; i < zombies.size(); ++i){ 
 
             glm::mat4 model;
+
             zombies[i].calcLocation();
+            
             model = Matrix_Identity() * Matrix_Translate(zombies[i].DeslocX, zombies[i].DeslocY, zombies[i].DeslocZ);
 
             glUniformMatrix4fv(model_uniform, 1, GL_FALSE, glm::value_ptr(model));
