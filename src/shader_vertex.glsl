@@ -1,63 +1,83 @@
 #version 330 core
 
-// Atributos de vértice recebidos como entrada ("in") pelo Vertex Shader.
-// Veja a função BuildTriangle() em "main.cpp".
 layout (location = 0) in vec4 model_coefficients;
-layout (location = 1) in vec4 color_coefficients;
+layout (location = 1) in vec4 normal_coefficients;
+layout (location = 2) in vec2 texture_coefficients;
 
-// Atributos de vértice que serão gerados como saída ("out") pelo Vertex Shader.
-// ** Estes serão interpolados pelo rasterizador! ** gerando, assim, valores
-// para cada fragmento, os quais serão recebidos como entrada pelo Fragment
-// Shader. Veja o arquivo "shader_fragment.glsl".
-out vec4 cor_interpolada_pelo_rasterizador;
-
-// Matrizes computadas no código C++ e enviadas para a GPU
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 
-// Variável booleana no código C++ também enviada para a GPU
-uniform bool render_as_black;
+out vec4 position_world;
+out vec4 position_model;
+out vec4 normal;
+out vec2 texcoords;
+
+#define SPHERE 0
+uniform int object_id;
+uniform vec4 bbox_min;
+uniform vec4 bbox_max;
+uniform sampler2D TextureImage0;
+out vec3 color_v;
+#define M_PI   3.14159265358979323846
+#define M_PI_2 1.57079632679489661923
+
 
 void main()
 {
-    // A variável gl_Position define a posição final de cada vértice
-    // OBRIGATORIAMENTE em "normalized device coordinates" (NDC), onde cada
-    // coeficiente está entre -1 e 1.  (Veja {+NDC2+}).
-    //
-    // O código em "main.cpp" define os vértices dos modelos em coordenadas
-    // locais de cada modelo (array model_coefficients). Abaixo, utilizamos
-    // operações de modelagem, definição da câmera, e projeção, para computar
-    // as coordenadas finais em NDC (variável gl_Position). Após a execução
-    // deste Vertex Shader, a placa de vídeo (GPU) fará a divisão por W. Veja
-    // slides 41-67 e 69-86 do documento Aula_09_Projecoes.pdf.
 
+ 
     gl_Position = projection * view * model * model_coefficients;
 
-    // Como as variáveis acima  (tipo vec4) são vetores com 4 coeficientes,
-    // também é possível acessar e modificar cada coeficiente de maneira
-    // independente. Esses são indexados pelos nomes x, y, z, e w (nessa
-    // ordem, isto é, 'x' é o primeiro coeficiente, 'y' é o segundo, ...):
-    //
-    //     gl_Position.x = model_coefficients.x;
-    //     gl_Position.y = model_coefficients.y;
-    //     gl_Position.z = model_coefficients.z;
-    //     gl_Position.w = model_coefficients.w;
-    //
+    position_world = model * model_coefficients;
 
-    if ( render_as_black )
+    position_model = model_coefficients;
+
+    normal = inverse(transpose(model)) * normal_coefficients;
+    normal.w = 0.0;
+
+    texcoords = texture_coefficients;
+
+    // --------
+
+    vec4 origin = vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 camera_position = inverse(view) * origin;
+
+    vec4 p = position_world;
+
+    vec4 n = normalize(normal);
+
+    vec4 l = normalize(vec4(1.0,1.0,0.0,0.0));
+
+    vec4 v = normalize(camera_position - p);
+
+    vec4 r = -l + 2*n*(dot(n,l));
+
+    vec4 h = normalize(v+l);
+
+    float U = 0.0;
+    float V = 0.0;
+
+    if ( object_id == SPHERE )
     {
-        // Ignoramos o atributo cor dos vértices, colocando a cor final como
-        // preta. Utilizamos isto para renderizar as arestas pretas dos cubos.
-        cor_interpolada_pelo_rasterizador = vec4(0.0f,0.0f,0.0f,1.0f);
+        vec4 bbox_center = (bbox_min + bbox_max) / 2.0;
+
+        vec4 pl = bbox_center + normalize(position_model-bbox_center);
+        vec4 pv = pl - bbox_center;
+
+        U = ((atan(pv[0],pv[2]))+M_PI)/(2*M_PI);
+        V = (asin(pv[1])+M_PI_2)/M_PI;
     }
-    else
-    {
-        // Copiamos o atributo cor (de entrada) de cada vértice para a variável
-        // "cor_interpolada_pelo_rasterizador". Esta variável será interpolada pelo
-        // rasterizador, gerando valores interpolados para cada fragmento!  Veja o
-        // arquivo "shader_fragment.glsl".
-        cor_interpolada_pelo_rasterizador = color_coefficients;
-    }
+
+    float lambert = max(0,dot(n,l));
+    vec3 Ka = vec3(0.04,0.04,0.04);
+    vec3 Ks = vec3(0.8,0.8,0.8);
+    vec3 I = vec3(0.2,0.2,0.2);
+    vec3 Ia = vec3(0.9,0.7,0.7);
+    float q = 30;
+    float ql = 5;
+
+    vec3 Kd0;
+    Kd0 = texture(TextureImage0, vec2(U,V)).rgb;
+    color_v =  Kd0 * Ia * (lambert + 0.01);
 }
-
