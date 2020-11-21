@@ -1,4 +1,3 @@
-
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -15,10 +14,8 @@
 #include <iostream>
 #include <random>
 
-
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
@@ -40,8 +37,6 @@ struct ObjModel
     std::vector<tinyobj::shape_t>     shapes;
     std::vector<tinyobj::material_t>  materials;
 
-    // Este construtor lê o modelo de um arquivo utilizando a biblioteca tinyobjloader.
-    // Veja: https://github.com/syoyo/tinyobjloader
     ObjModel(const char* filename, const char* basepath = NULL, bool triangulate = true)
     {
         printf("Carregando modelo \"%s\"... ", filename);
@@ -61,15 +56,14 @@ struct ObjModel
 
 struct SceneObject
 {
-    std::string  name;        // Nome do objeto
-    size_t       first_index; // Índice do primeiro vértice dentro do vetor indices[] definido em BuildTrianglesAndAddToVirtualScene()
-    size_t       num_indices; // Número de índices do objeto dentro do vetor indices[] definido em BuildTrianglesAndAddToVirtualScene()
-    GLenum       rendering_mode; // Modo de rasterização (GL_TRIANGLES, GL_TRIANGLE_STRIP, etc.)
-    GLuint       vertex_array_object_id; // ID do VAO onde estão armazenados os atributos do modelo
-    glm::vec3    bbox_min; // Axis-Aligned Bounding Box do objeto
+    std::string  name;  
+    size_t       first_index;
+    size_t       num_indices; 
+    GLenum       rendering_mode; 
+    GLuint       vertex_array_object_id; 
+    glm::vec3    bbox_min; 
     glm::vec3    bbox_max;
 };
-
 
 void PushMatrix(glm::mat4 M);
 void PopMatrix(glm::mat4& M);
@@ -86,15 +80,12 @@ GLuint LoadShader_Fragment(const char* filename);
 void LoadShader(const char* filename, GLuint shader_id);
 GLuint CreateGpuProgram(GLuint vertex_shader_id, GLuint fragment_shader_id);
 
-
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
 void ErrorCallback(int error, const char* description);
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mode);
-void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
 void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
 
-// Variáveis que definem um programa de GPU (shaders). Veja função LoadShadersFromFiles().
 GLuint vertex_shader_id;
 GLuint fragment_shader_id;
 GLuint program_id = 0;
@@ -105,7 +96,6 @@ GLint object_id_uniform;
 GLint bbox_min_uniform;
 GLint bbox_max_uniform;
 
-// Número de texturas carregadas pela função LoadTextureImage()
 GLuint g_NumLoadedTextures = 0;
 
 std::map<std::string, SceneObject> g_VirtualScene;
@@ -114,6 +104,8 @@ std::stack<glm::mat4>  g_MatrixStack;
 std::default_random_engine generator;
 
 bool g_thirdPerson = false;
+bool g_paused = false;
+bool g_paused_aux = false;
 
 float g_ScreenRatio = 1.0f;
 
@@ -121,6 +113,8 @@ float g_AngleX = 0.0f;
 float g_AngleY = 0.0f;
 float g_AngleZ = 0.0f;
 
+int wave = 1;
+int score = 0;
 
 float charSpeed = 4.5;
 
@@ -196,12 +190,13 @@ void Zombie::calcLocation(){
 void Zombie::hit(){
     life--;
     if (life <= 0){
+        score++;
+        std::cout << "SCORE: " << score << "\n";
         dead = true;
     }
 }
 
 std::vector<Zombie> zombies;
-
 
 class Projectile{
     public:
@@ -229,7 +224,7 @@ Projectile::Projectile(float x,float y,float z, glm::vec4 d, float s){
     direction = normalize(d);
     creationTime = (float)glfwGetTime();
 
-    int distance = 20;
+    int distance = 10*wave;
 
     p1 = glm::vec4(x,y,z,1.0f);
     p2 = glm::vec4(x-direction[0]*distance,y-direction[1]*distance+2,z-direction[2]*distance,1.0f);
@@ -248,10 +243,6 @@ void Projectile::calcLocation(){
     glm::vec4 c234 = c23 + t*(c34-c23);
     glm::vec4 c = c123 + t*(c234-c123);
 
-    //DeslocX -= direction[0]*speed*deltaTime;
-    //DeslocY -= direction[1]*speed*deltaTime;
-    //DeslocZ -= direction[2]*speed*deltaTime;
-
     DeslocX = c[0];
     DeslocY = c[1];
     DeslocZ = c[2];
@@ -262,39 +253,45 @@ void Projectile::testLifeTime(){
     float currentPTime = (float)glfwGetTime();
     projectileDisabled = ((currentPTime - creationTime) > lifeTime);
 }
-
-
 std::vector<Projectile> projectiles;
-
 
 bool intersect(glm::vec3 bbox_min_a, glm::vec3 bbox_max_a, glm::vec3 bbox_min_b, glm::vec3 bbox_max_b) {
   return ((bbox_min_a[0] <= bbox_max_b[0] && bbox_max_a[0] >= bbox_min_b[0]) && 
             (bbox_min_a[1] <= bbox_max_b[1] && bbox_max_a[1] >= bbox_min_b[1]) && 
             (bbox_min_a[2] <= bbox_max_b[2] && bbox_max_a[2] >= bbox_min_b[2]));
 }
+bool intersectCylinderY(float rad1, glm::vec3 center1, float rad2, glm::vec3 center2) {
+    center1[1] = center2[1];
+    return (length(center1 - center2) < (rad1+rad2));
+}
 
-bool g_LeftMouseButtonPressed = true;
+std::vector<glm::vec4> trees;
+std::vector<glm::vec3> grass;
+std::vector<glm::vec3> stones1;
+std::vector<glm::vec3> stones2;
 
+bool intersectTrees(glm::vec3 centerP){
+    bool intersect = false;
+    for (int i=0; i<trees.size(); i++){
+        if (intersectCylinderY(1,glm::vec3(trees[i][0],0,trees[i][2]),1,glm::vec3(centerP[0],0,centerP[2]))){
+            if (!((trees[i][0]<2) && (trees[i][0]>-2) && (trees[i][2]<2) && (trees[i][2]>-2))){
+                intersect = true;
+            }
+        }
+    }
+    return intersect;
+}
+
+bool cowAvaiable;
+glm::vec3 cowPosition;
+float cowTime = 0;
 
 float g_CameraTheta = 0.0f;
 float g_CameraPhi = 0.0f;
-float g_CameraDistance = 2.5f;
-
-float g_ForearmAngleZ = 0.0f;
-float g_ForearmAngleX = 0.0f;
-
-float g_TorsoPositionX = 0.0f;
-float g_TorsoPositionY = 0.0f;
-
-bool g_UsePerspectiveProjection = true;
-
-bool g_ShowInfoText = true;
-
-
-
 
 int main(int argc, char* argv[])
 {
+
     int success = glfwInit();
     if (!success)
     {
@@ -316,7 +313,7 @@ int main(int argc, char* argv[])
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     GLFWwindow* window;
-    window = glfwCreateWindow(600, 600, "Trabalho Final", NULL, NULL);
+    window = glfwCreateWindow(800, 800, "Z-Waves", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
@@ -324,17 +321,11 @@ int main(int argc, char* argv[])
         std::exit(EXIT_FAILURE);
     }
 
-
     glfwSetKeyCallback(window, KeyCallback);
-    glfwSetMouseButtonCallback(window, MouseButtonCallback);
     glfwSetCursorPosCallback(window, CursorPosCallback);
-    //glfwSetScrollCallback(window, ScrollCallback);
-
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
-    glfwSetWindowSize(window, 1280, 720);
+    glfwSetWindowSize(window, 800, 800);
 
     glfwMakeContextCurrent(window);
 
@@ -347,16 +338,8 @@ int main(int argc, char* argv[])
 
     printf("GPU: %s, %s, OpenGL %s, GLSL %s\n", vendor, renderer, glversion, glslversion);
 
-    //GLuint vertex_shader_id = LoadShader_Vertex("../../src/shader_vertex.glsl");
-    //GLuint fragment_shader_id = LoadShader_Fragment("../../src/shader_fragment.glsl");
-
-    //GLuint program_id = CreateGpuProgram(vertex_shader_id, fragment_shader_id);
-
-    //GLuint vertex_array_object_id = BuildTriangles();
-
     LoadShadersFromFiles();
 
-    // Carregamos duas imagens para serem utilizadas como textura
     LoadTextureImage("../../data/tc-earth_daymap_surface.jpg");      // TextureImage0
     LoadTextureImage("../../data/tc-earth_nightmap_citylights.gif"); // TextureImage1
     LoadTextureImage("../../data/grass.jpg"); // TextureImage2
@@ -366,8 +349,12 @@ int main(int argc, char* argv[])
     LoadTextureImage("../../data/map.png"); // TextureImage6
     LoadTextureImage("../../data/tree.png"); // TextureImage7
     LoadTextureImage("../../data/cow.png"); // TextureImage8
+    LoadTextureImage("../../data/grass.png"); // TextureImage9
+    LoadTextureImage("../../data/stone.png"); // TextureImage10
+    LoadTextureImage("../../data/stone2.png"); // TextureImage11
+    LoadTextureImage("../../data/tree2.png"); // TextureImage12
 
-    // Construímos a representação de objetos geométricos através de malhas de triângulos
+
     ObjModel spheremodel("../../data/sphere.obj");
     ComputeNormals(&spheremodel);
     BuildTrianglesAndAddToVirtualScene(&spheremodel);
@@ -408,6 +395,23 @@ int main(int argc, char* argv[])
     ComputeNormals(&cowmodel);
     BuildTrianglesAndAddToVirtualScene(&cowmodel);
 
+    ObjModel grassmodel("../../data/grass.obj");
+    ComputeNormals(&grassmodel);
+    BuildTrianglesAndAddToVirtualScene(&grassmodel);
+
+    ObjModel stonemodel("../../data/stone.obj");
+    ComputeNormals(&stonemodel);
+    BuildTrianglesAndAddToVirtualScene(&stonemodel);
+
+    ObjModel stone2model("../../data/stone2.obj");
+    ComputeNormals(&stone2model);
+    BuildTrianglesAndAddToVirtualScene(&stone2model);
+
+    ObjModel tree2model("../../data/tree2.obj");
+    ComputeNormals(&tree2model);
+    BuildTrianglesAndAddToVirtualScene(&tree2model);
+
+
     glm::vec3 bbox_min_projectile_obj = g_VirtualScene["pcube"].bbox_min* 0.05f;
     glm::vec3 bbox_max_projectile_obj = g_VirtualScene["pcube"].bbox_max* 0.05f;
 
@@ -427,17 +431,12 @@ int main(int argc, char* argv[])
         BuildTrianglesAndAddToVirtualScene(&model);
     }
 
-    // Inicializamos o código para renderização de texto.
-    //TextRendering_Init();
-
-    // Habilitamos o Z-buffer. Veja slides 104-116 do documento Aula_09_Projecoes.pdf.
     glEnable(GL_DEPTH_TEST);
-
-    // Habilitamos o Backface Culling. Veja slides 23-34 do documento Aula_13_Clipping_and_Culling.pdf.
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
 
+   
     glm::mat4 the_projection;
     glm::mat4 the_model;
     glm::mat4 the_view;
@@ -445,8 +444,46 @@ int main(int argc, char* argv[])
     lastTime = (float)glfwGetTime();
     float gunCooldownAux = 0;
 
+    std::uniform_real_distribution<float> distribution_tree(-40*1.5,40*1.5);
+    std::uniform_int_distribution<int> distribution_tree2(0,1);
+    for (int i=0; i<100;i++){
+        trees.push_back(glm::vec4(distribution_tree(generator),-1.0f,distribution_tree(generator),distribution_tree2(generator)));
+    }
+
+    for (int i=0; i<700;i++){
+        grass.push_back(glm::vec3(distribution_tree(generator),-1.0f,distribution_tree(generator)));
+    }
+
+    for (int i=0; i<600;i++){
+        stones1.push_back(glm::vec3(distribution_tree(generator),-1.0f,distribution_tree(generator)));
+    }
+
+    std::uniform_real_distribution<float> distribution_stone1(-35*1.5-30,-35*1.5-5);
+    std::uniform_real_distribution<float> distribution_stone2(35*1.5+5,35*1.5+30);
+
+    for (int i=0; i<20;i++){
+        
+        stones2.push_back(glm::vec3(distribution_tree(generator),-1.0f,distribution_stone1(generator)));
+        stones2.push_back(glm::vec3(distribution_tree(generator),-1.0f,distribution_stone2(generator)));
+        stones2.push_back(glm::vec3(distribution_stone1(generator),-1.0f,distribution_tree(generator)));
+        stones2.push_back(glm::vec3(distribution_stone2(generator),-1.0f,distribution_tree(generator)));
+    }
+
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
     while (!glfwWindowShouldClose(window))
     {
+
+        if (g_paused_aux){
+            if (g_paused){
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }else{
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            }
+            g_paused_aux = false;
+        }
 
         glClearColor(0.1f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -487,64 +524,54 @@ int main(int argc, char* argv[])
         float charDeltaSpeed = deltaTime*charSpeed;
 
         bool changePosition = false;
-        float aux_g_DelocX;
-        float aux_g_DelocZ;
+        float aux_g_DeslocX;
+        float aux_g_DeslocZ;
 
         if (glfwGetKey(window, GLFW_KEY_W ) == GLFW_PRESS){
             changePosition = true;
 
-            aux_g_DelocX = g_DeslocX - w[0]*charDeltaSpeed;
-            //g_DeslocY -= w[1]*charDeltaSpeed;
-            aux_g_DelocZ = g_DeslocZ - w[2]*charDeltaSpeed;
-
-            //g_DeslocX -= w[0]*charDeltaSpeed;
-            //g_DeslocY -= w[1]*charDeltaSpeed;
-            //g_DeslocZ -= w[2]*charDeltaSpeed;
+            aux_g_DeslocX = g_DeslocX - w[0]*charDeltaSpeed;
+            aux_g_DeslocZ = g_DeslocZ - w[2]*charDeltaSpeed;
         }
 
         if (glfwGetKey(window, GLFW_KEY_S ) == GLFW_PRESS){
             changePosition = true;
 
-            aux_g_DelocX = g_DeslocX + w[0]*charDeltaSpeed;
-            //g_DeslocY += w[1]*charDeltaSpeed;
-            aux_g_DelocZ = g_DeslocZ + w[2]*charDeltaSpeed;
-
-            //g_DeslocX += w[0]*charDeltaSpeed;
-            //g_DeslocY += w[1]*charDeltaSpeed;
-            //g_DeslocZ += w[2]*charDeltaSpeed;
+            aux_g_DeslocX = g_DeslocX + w[0]*charDeltaSpeed;
+            aux_g_DeslocZ = g_DeslocZ + w[2]*charDeltaSpeed;
         }
 
         if (glfwGetKey(window, GLFW_KEY_A ) == GLFW_PRESS){
             changePosition = true;
 
-            aux_g_DelocX = g_DeslocX - u[0]*charDeltaSpeed;
-            //g_DeslocY -= u[1]*charDeltaSpeed;
-            aux_g_DelocZ = g_DeslocZ - u[2]*charDeltaSpeed;
-
-            //g_DeslocX -= u[0]*charDeltaSpeed;
-            //g_DeslocY -= u[1]*charDeltaSpeed;
-            //g_DeslocZ -= u[2]*charDeltaSpeed;
+            aux_g_DeslocX = g_DeslocX - u[0]*charDeltaSpeed;
+            aux_g_DeslocZ = g_DeslocZ - u[2]*charDeltaSpeed;
         }
 
         if (glfwGetKey(window, GLFW_KEY_D ) == GLFW_PRESS){
             changePosition = true;
 
-            aux_g_DelocX = g_DeslocX + u[0]*charDeltaSpeed;
-            //g_DeslocY += u[1]*charDeltaSpeed;
-            aux_g_DelocZ = g_DeslocZ + u[2]*charDeltaSpeed;
+            aux_g_DeslocX = g_DeslocX + u[0]*charDeltaSpeed;
+            aux_g_DeslocZ = g_DeslocZ + u[2]*charDeltaSpeed;
+        }
+        if (changePosition){
 
-            //g_DeslocX += u[0]*charDeltaSpeed;
-            //g_DeslocY += u[1]*charDeltaSpeed;
-            //g_DeslocZ += u[2]*charDeltaSpeed;
+            if (((aux_g_DeslocZ > -35*1.5) && (aux_g_DeslocZ < 42*1.5)) && (!intersectTrees(glm::vec3(g_DeslocX,0,aux_g_DeslocZ)))){
+                g_DeslocZ = aux_g_DeslocZ;
+            }
+
+            if (((aux_g_DeslocX > -35*1.5) && (aux_g_DeslocX < 35*1.5)) && (!intersectTrees(glm::vec3(aux_g_DeslocX,0,g_DeslocZ)))){
+                g_DeslocX = aux_g_DeslocX;
+            }
+
         }
 
-        if (changePosition){
-            if ((aux_g_DelocZ > -35*1.5) && (aux_g_DelocZ < 42*1.5)){
-                g_DeslocZ = aux_g_DelocZ;
-            }
-            if ((aux_g_DelocX > -35*1.5) && (aux_g_DelocX < 35*1.5)){
-                g_DeslocX = aux_g_DelocX;
-            }
+        if (cowTime > 0){
+            charSpeed = 30;
+        }else if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT ) == GLFW_PRESS){
+            charSpeed = 10;
+        }else{
+            charSpeed = 4.5;
         }
 
         if ((glfwGetKey(window, GLFW_KEY_W ) == GLFW_PRESS) || (glfwGetKey(window, GLFW_KEY_S ) == GLFW_PRESS) || (glfwGetKey(window, GLFW_KEY_A ) == GLFW_PRESS) || (glfwGetKey(window, GLFW_KEY_D ) == GLFW_PRESS) ){
@@ -554,13 +581,17 @@ int main(int argc, char* argv[])
             walking1 = 3.14;
             walking2 = 3.14;
         }
-
-        float gunCooldown = 0.2;
         
-        if ((glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) && ((currentTime - gunCooldownAux) > gunCooldown)){
+        float gunCooldown = 0.4-(wave*0.01);
+        
+        if (cowTime > 0){
+            gunCooldown = 0;
+        } 
+
+        if ((glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) && ((currentTime - gunCooldownAux) > gunCooldown)){
             gunCooldownAux = currentTime;
             if (g_thirdPerson){
-                projectiles.push_back(Projectile(g_DeslocX+(-w[0]*1.5),g_DeslocY+(-w[1]*1.5)+0.5f,g_DeslocZ+(-w[2]*1.5),w,27.0f));
+                projectiles.push_back(Projectile(g_DeslocX+(-w[0]*1.5),g_DeslocY+(-w[1]*1.5)+1.2f,g_DeslocZ+(-w[2]*1.5),w,27.0f));
             }else{
                 projectiles.push_back(Projectile(g_DeslocX+(-w[0]*1.5),g_DeslocY+(-w[1]*1.5)-0.2f,g_DeslocZ+(-w[2]*1.5),w,27.0f));
             }
@@ -575,7 +606,7 @@ int main(int argc, char* argv[])
         glm::mat4 projection;
 
         float nearplane = -0.1f;  
-        float farplane  = -100.0f; 
+        float farplane  = -150.0f; 
 
         float field_of_view = 3.141592 / 3.0f;
         projection = Matrix_Perspective(field_of_view, g_ScreenRatio, nearplane, farplane);
@@ -596,16 +627,45 @@ int main(int argc, char* argv[])
         #define MAP 7
         #define TREE 8
         #define COW 9
+        #define GRASS 10
+        #define STONE 11
+        #define STONE2 12
+        #define TREE2 13
 
 
-        if (zombies.size() < 10){
+        if (zombies.size() <= 0){
 
-            std::uniform_real_distribution<float> distribution1(-35,35);
-            std::uniform_real_distribution<float> distribution2(0.5,2.0);
-            std::uniform_int_distribution<int> distribution3(1,6);
-            int dice_roll = distribution1(generator); 
+            for (int i=0; i<(wave*2); i++){
+                std::uniform_real_distribution<float> distribution1(-35,35);
+                std::uniform_real_distribution<float> distribution2(0.5,wave*0.5);
+                std::uniform_int_distribution<int> distribution3(1,6);
 
-            zombies.push_back(Zombie(distribution1(generator), distribution1(generator), distribution2(generator), distribution3(generator)));
+                zombies.push_back(Zombie(distribution1(generator), distribution1(generator), distribution2(generator), distribution3(generator)));
+            }
+            if (!cowAvaiable){
+                cowAvaiable = true;
+                std::uniform_real_distribution<float> distribution1(-35,35);
+                cowPosition = glm::vec3(distribution1(generator),-1.0f,distribution1(generator));
+            }
+            std::cout << "------------ WAVE " << wave << " ------------\n";
+            wave++;
+        }
+
+        if (cowAvaiable){
+            model = Matrix_Translate(cowPosition[0],cowPosition[1],cowPosition[2]) *  Matrix_Scale(1.0f,1.0f,1.0f) * Matrix_Rotate_Y(currentTime);
+            glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
+            glUniform1i(object_id_uniform, COW);
+            DrawVirtualObject("cow");
+
+            if (intersectCylinderY(1,cowPosition,1,glm::vec3(g_DeslocX,0.0f,g_DeslocZ))){
+                cowAvaiable = false;
+                cowTime = 5;
+                playerLife += 2;
+            }
+        }
+
+        if (cowTime > 0){
+            cowTime -= deltaTime;
         }
 
 
@@ -633,7 +693,6 @@ int main(int argc, char* argv[])
                 zombies[i].calcLocation();
             }
 
-            //TORÇO 
             model = Matrix_Translate(0.0f,1.0f,0.0f) * Matrix_Translate(zombies[i].DeslocX,zombies[i].DeslocY,zombies[i].DeslocZ) * Matrix_Rotate_Y(0.7853*zombies[i].orientation);
             
             PushMatrix(model);
@@ -651,7 +710,6 @@ int main(int argc, char* argv[])
             PopMatrix(model);
 
             PushMatrix(model);
-                //BRAÇO 2
                 model = model * Matrix_Translate(0.0f, 0.35f, -0.35f) ;
                 PushMatrix(model);
                     model = model ;
@@ -665,7 +723,6 @@ int main(int argc, char* argv[])
             PopMatrix(model);
 
             PushMatrix(model);
-                //BRAÇO 2
                 model = model * Matrix_Translate(0.0f, 0.35f, 0.35f) ;
                 PushMatrix(model);
                     model = model ;
@@ -679,7 +736,6 @@ int main(int argc, char* argv[])
             PopMatrix(model);
 
             PushMatrix(model);
-                //PERNA 1
                 model = model * Matrix_Translate(0.0f, -0.4f, 0.12f) ;
                 PushMatrix(model);
                     model = model ;
@@ -692,7 +748,6 @@ int main(int argc, char* argv[])
                 PopMatrix(model);
             PopMatrix(model);
             PushMatrix(model);
-                //PERNA 2
                 model = model * Matrix_Translate(0.0f, -0.4f, -0.12f) ;
                 PushMatrix(model);
                     model = model ;
@@ -773,7 +828,7 @@ int main(int argc, char* argv[])
         }
         
 
-        model = Matrix_Translate(-10.0f,20.0f,0.0f)
+        model = Matrix_Translate(-10.0f,35.0f,0.0f)
               * Matrix_Rotate_Z(0.6f)
               * Matrix_Rotate_X(0.2f)
               * Matrix_Rotate_Y(g_AngleY + (float)glfwGetTime() * 0.1f)
@@ -784,9 +839,6 @@ int main(int argc, char* argv[])
 
 
         if(g_thirdPerson){
-
-
-            //TORÇO 
             model = Matrix_Translate(0.0f,0.2f,0.0f) * Matrix_Translate(g_DeslocX,g_DeslocY,g_DeslocZ) * Matrix_Rotate_Y(g_CameraTheta-1.57);
             
             PushMatrix(model);
@@ -804,10 +856,9 @@ int main(int argc, char* argv[])
             PopMatrix(model);
 
             PushMatrix(model);
-                //BRAÇO 1
                 model = model * Matrix_Translate(0.0f, 0.35f, -0.35f) ;
-                PushMatrix(model);//(w[1]*2)+1.2
-                    model = model * Matrix_Rotate_Z(g_CameraPhi+1.57) * Matrix_Rotate_X(0.4) * Matrix_Translate(0.0f, 0.4f, 0.0f) ;
+                PushMatrix(model);
+                    model = model * Matrix_Rotate_Z(g_CameraPhi+1.57-0.4) * Matrix_Rotate_X(0.4) * Matrix_Translate(0.0f, 0.4f, 0.0f) ;
                     PushMatrix(model);
                         model = model * Matrix_Scale(0.1f,0.4f,0.2f) * Matrix_Scale(0.9f,0.9f,0.5f); 
                         glUniformMatrix4fv(model_uniform, 1, GL_FALSE, glm::value_ptr(model));
@@ -826,12 +877,11 @@ int main(int argc, char* argv[])
             PopMatrix(model);
 
             PushMatrix(model);
-                //BRAÇO 2
                 model = model * Matrix_Translate(0.0f, 0.35f, 0.35f) ;
                 PushMatrix(model);
                     model = model ;
-                    PushMatrix(model); //(w[1]*2)+1.2
-                        model = model  * Matrix_Rotate_Z(g_CameraPhi+1.57) * Matrix_Rotate_X(-0.4) * Matrix_Translate(0.0f, 0.4f, 0.0f) *  Matrix_Scale(0.1f,0.4f,0.2f) * Matrix_Scale(0.9f,0.9f,0.5f); 
+                    PushMatrix(model); 
+                        model = model  * Matrix_Rotate_Z(g_CameraPhi+1.57-0.4) * Matrix_Rotate_X(-0.4) * Matrix_Translate(0.0f, 0.4f, 0.0f) *  Matrix_Scale(0.1f,0.4f,0.2f) * Matrix_Scale(0.9f,0.9f,0.5f); 
                         glUniformMatrix4fv(model_uniform, 1, GL_FALSE, glm::value_ptr(model));
                         glUniform1i(object_id_uniform, PCUBE);
                         DrawVirtualObject("pcube");
@@ -840,7 +890,6 @@ int main(int argc, char* argv[])
             PopMatrix(model);
 
             PushMatrix(model);
-                //PERNA 1
                 model = model * Matrix_Translate(0.0f, -0.4f, 0.12f) ;
                 PushMatrix(model);
                     model = model ;
@@ -853,7 +902,7 @@ int main(int argc, char* argv[])
                 PopMatrix(model);
             PopMatrix(model);
             PushMatrix(model);
-                //PERNA 2
+     
                 model = model * Matrix_Translate(0.0f, -0.4f, -0.12f) ;
                 PushMatrix(model);
                     model = model ;
@@ -873,37 +922,50 @@ int main(int argc, char* argv[])
             DrawVirtualObject("gun");
         }
 
-
-        
-
-        model = Matrix_Translate(0.0f,-1.1f,0.0f) *  Matrix_Scale(1.5f,2.0f,1.5f) * Matrix_Rotate_Y(5);
+        model = Matrix_Translate(1.0f,-1.1f,1.0f) *  Matrix_Scale(1.5f,2.0f,1.5f);
         glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
         glUniform1i(object_id_uniform, MAP);
         DrawVirtualObject("map");
 
-        model = Matrix_Translate(10.0f,-1.0f,10.0f) *  Matrix_Scale(2.0f,2.0f,2.0f)* Matrix_Rotate_Y(3);
-        glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-        glUniform1i(object_id_uniform, TREE);
-        DrawVirtualObject("tree");
+        for (int i=0; i<trees.size();i++){
+            if ((trees[i][3]) == 0){
+                model = Matrix_Translate(trees[i][0],-1.1f,trees[i][2]) *  Matrix_Scale(1.5f,2.0f,1.5f) * Matrix_Rotate_Y(trees[i][0]);
+                glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
+                glUniform1i(object_id_uniform, TREE);
+                DrawVirtualObject("tree");
+            }else{
+                model = Matrix_Translate(trees[i][0],-1.1f,trees[i][2]) *  Matrix_Scale(0.4f,0.4f,0.4f) * Matrix_Rotate_Y(trees[i][0]);
+                glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
+                glUniform1i(object_id_uniform, TREE2);
+                DrawVirtualObject("tree2");
+            }
 
-        model = Matrix_Translate(-7.0f,-1.0f,7.0f) *  Matrix_Scale(2.0f,2.0f,2.0f) * Matrix_Rotate_Y(1.4);
-        glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-        glUniform1i(object_id_uniform, TREE);
-        DrawVirtualObject("tree");
+        }
 
-        model = Matrix_Translate(20.0f,-1.0f,-12.0f) *  Matrix_Scale(2.0f,2.0f,2.0f) * Matrix_Rotate_Y(0.9);
-        glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-        glUniform1i(object_id_uniform, TREE);
-        DrawVirtualObject("tree");
-        
-        model = Matrix_Translate(15.0f,-1.0f,-12.0f) *  Matrix_Scale(1.0f,1.0f,1.0f) * Matrix_Rotate_Y(currentTime);
-        glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
-        glUniform1i(object_id_uniform, COW);
-        DrawVirtualObject("cow");
+        for (int i=0; i<grass.size();i++){
+            model = Matrix_Translate(grass[i][0],-1.1f,grass[i][2]) *  Matrix_Scale(0.4f,0.4f,0.4f) * Matrix_Rotate_Y(grass[i][0]);
+            glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
+            glUniform1i(object_id_uniform, GRASS);
+            DrawVirtualObject("grass");
+        }
+
+        for (int i=0; i<stones1.size();i++){
+            model = Matrix_Translate(stones1[i][0],-1.1f,stones1[i][2]) *  Matrix_Scale(0.6f,0.6f,0.6f) * Matrix_Rotate_Y(stones1[i][0])* Matrix_Rotate_X(stones1[i][2]);
+            glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
+            glUniform1i(object_id_uniform, STONE);
+            DrawVirtualObject("stone");
+        }
+
+        for (int i=0; i<stones2.size();i++){
+            model = Matrix_Translate(stones2[i][0],((abs(stones2[i][0])+abs(stones2[i][2]))/90),stones2[i][2]) *  Matrix_Scale(3.0f,3.0f,3.0f) * Matrix_Rotate_Y(stones2[i][0]) * Matrix_Rotate_X(stones2[i][2]);
+            glUniformMatrix4fv(model_uniform, 1 , GL_FALSE , glm::value_ptr(model));
+            glUniform1i(object_id_uniform, STONE2);
+            DrawVirtualObject("stone2");
+        }
 
 
         glfwSwapBuffers(window);
-
+        
 
         glfwPollEvents();
     }
@@ -913,12 +975,12 @@ int main(int argc, char* argv[])
 
     return 0;
 }
+    
 
 void LoadTextureImage(const char* filename)
 {
     printf("Carregando imagem \"%s\"... ", filename);
 
-    // Primeiro fazemos a leitura da imagem do disco
     stbi_set_flip_vertically_on_load(true);
     int width;
     int height;
@@ -933,21 +995,17 @@ void LoadTextureImage(const char* filename)
 
     printf("OK (%dx%d).\n", width, height);
 
-    // Agora criamos objetos na GPU com OpenGL para armazenar a textura
     GLuint texture_id;
     GLuint sampler_id;
     glGenTextures(1, &texture_id);
     glGenSamplers(1, &sampler_id);
 
-    // Veja slides 95-96 do documento Aula_20_Mapeamento_de_Texturas.pdf
     glSamplerParameteri(sampler_id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glSamplerParameteri(sampler_id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    // Parâmetros de amostragem da textura.
     glSamplerParameteri(sampler_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glSamplerParameteri(sampler_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    // Agora enviamos a imagem lida do disco para a GPU
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
@@ -965,27 +1023,15 @@ void LoadTextureImage(const char* filename)
     g_NumLoadedTextures += 1;
 }
 
-// Função que desenha um objeto armazenado em g_VirtualScene. Veja definição
-// dos objetos na função BuildTrianglesAndAddToVirtualScene().
 void DrawVirtualObject(const char* object_name)
 {
-    // "Ligamos" o VAO. Informamos que queremos utilizar os atributos de
-    // vértices apontados pelo VAO criado pela função BuildTrianglesAndAddToVirtualScene(). Veja
-    // comentários detalhados dentro da definição de BuildTrianglesAndAddToVirtualScene().
     glBindVertexArray(g_VirtualScene[object_name].vertex_array_object_id);
 
-    // Setamos as variáveis "bbox_min" e "bbox_max" do fragment shader
-    // com os parâmetros da axis-aligned bounding box (AABB) do modelo.
     glm::vec3 bbox_min = g_VirtualScene[object_name].bbox_min;
     glm::vec3 bbox_max = g_VirtualScene[object_name].bbox_max;
     glUniform4f(bbox_min_uniform, bbox_min.x, bbox_min.y, bbox_min.z, 1.0f);
     glUniform4f(bbox_max_uniform, bbox_max.x, bbox_max.y, bbox_max.z, 1.0f);
 
-    // Pedimos para a GPU rasterizar os vértices dos eixos XYZ
-    // apontados pelo VAO como linhas. Veja a definição de
-    // g_VirtualScene[""] dentro da função BuildTrianglesAndAddToVirtualScene(), e veja
-    // a documentação da função glDrawElements() em
-    // http://docs.gl/gl3/glDrawElements.
     glDrawElements(
         g_VirtualScene[object_name].rendering_mode,
         g_VirtualScene[object_name].num_indices,
@@ -993,8 +1039,6 @@ void DrawVirtualObject(const char* object_name)
         (void*)(g_VirtualScene[object_name].first_index * sizeof(GLuint))
     );
 
-    // "Desligamos" o VAO, evitando assim que operações posteriores venham a
-    // alterar o mesmo. Isso evita bugs.
     glBindVertexArray(0);
 }
 
@@ -1027,6 +1071,10 @@ void LoadShadersFromFiles()
     glUniform1i(glGetUniformLocation(program_id, "TextureImage6"), 6);
     glUniform1i(glGetUniformLocation(program_id, "TextureImage7"), 7);
     glUniform1i(glGetUniformLocation(program_id, "TextureImage8"), 8);
+    glUniform1i(glGetUniformLocation(program_id, "TextureImage9"), 9);
+    glUniform1i(glGetUniformLocation(program_id, "TextureImage10"), 10);
+    glUniform1i(glGetUniformLocation(program_id, "TextureImage11"), 11);
+    glUniform1i(glGetUniformLocation(program_id, "TextureImage12"), 12);   
     glUseProgram(0);
 }
 
@@ -1217,11 +1265,11 @@ void BuildTrianglesAndAddToVirtualScene(ObjModel* model)
                 const float vx = model->attrib.vertices[3*idx.vertex_index + 0];
                 const float vy = model->attrib.vertices[3*idx.vertex_index + 1];
                 const float vz = model->attrib.vertices[3*idx.vertex_index + 2];
-                //printf("tri %d vert %d = (%.2f, %.2f, %.2f)\n", (int)triangle, (int)vertex, vx, vy, vz);
-                model_coefficients.push_back( vx ); // X
-                model_coefficients.push_back( vy ); // Y
-                model_coefficients.push_back( vz ); // Z
-                model_coefficients.push_back( 1.0f ); // W
+
+                model_coefficients.push_back( vx ); 
+                model_coefficients.push_back( vy ); 
+                model_coefficients.push_back( vz ); 
+                model_coefficients.push_back( 1.0f ); 
 
                 bbox_min.x = std::min(bbox_min.x, vx);
                 bbox_min.y = std::min(bbox_min.y, vy);
@@ -1236,10 +1284,10 @@ void BuildTrianglesAndAddToVirtualScene(ObjModel* model)
                     const float nx = model->attrib.normals[3*idx.normal_index + 0];
                     const float ny = model->attrib.normals[3*idx.normal_index + 1];
                     const float nz = model->attrib.normals[3*idx.normal_index + 2];
-                    normal_coefficients.push_back( nx ); // X
-                    normal_coefficients.push_back( ny ); // Y
-                    normal_coefficients.push_back( nz ); // Z
-                    normal_coefficients.push_back( 0.0f ); // W
+                    normal_coefficients.push_back( nx ); 
+                    normal_coefficients.push_back( ny ); 
+                    normal_coefficients.push_back( nz );
+                    normal_coefficients.push_back( 0.0f ); 
                 }
 
                 if ( idx.texcoord_index != -1 )
@@ -1272,8 +1320,8 @@ void BuildTrianglesAndAddToVirtualScene(ObjModel* model)
     glBindBuffer(GL_ARRAY_BUFFER, VBO_model_coefficients_id);
     glBufferData(GL_ARRAY_BUFFER, model_coefficients.size() * sizeof(float), NULL, GL_STATIC_DRAW);
     glBufferSubData(GL_ARRAY_BUFFER, 0, model_coefficients.size() * sizeof(float), model_coefficients.data());
-    GLuint location = 0; // "(location = 0)" em "shader_vertex.glsl"
-    GLint  number_of_dimensions = 4; // vec4 em "shader_vertex.glsl"
+    GLuint location = 0; 
+    GLint  number_of_dimensions = 4; 
     glVertexAttribPointer(location, number_of_dimensions, GL_FLOAT, GL_FALSE, 0, 0);
     glEnableVertexAttribArray(location);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -1285,8 +1333,8 @@ void BuildTrianglesAndAddToVirtualScene(ObjModel* model)
         glBindBuffer(GL_ARRAY_BUFFER, VBO_normal_coefficients_id);
         glBufferData(GL_ARRAY_BUFFER, normal_coefficients.size() * sizeof(float), NULL, GL_STATIC_DRAW);
         glBufferSubData(GL_ARRAY_BUFFER, 0, normal_coefficients.size() * sizeof(float), normal_coefficients.data());
-        location = 1; // "(location = 1)" em "shader_vertex.glsl"
-        number_of_dimensions = 4; // vec4 em "shader_vertex.glsl"
+        location = 1; 
+        number_of_dimensions = 4; 
         glVertexAttribPointer(location, number_of_dimensions, GL_FLOAT, GL_FALSE, 0, 0);
         glEnableVertexAttribArray(location);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -1299,8 +1347,8 @@ void BuildTrianglesAndAddToVirtualScene(ObjModel* model)
         glBindBuffer(GL_ARRAY_BUFFER, VBO_texture_coefficients_id);
         glBufferData(GL_ARRAY_BUFFER, texture_coefficients.size() * sizeof(float), NULL, GL_STATIC_DRAW);
         glBufferSubData(GL_ARRAY_BUFFER, 0, texture_coefficients.size() * sizeof(float), texture_coefficients.data());
-        location = 2; // "(location = 1)" em "shader_vertex.glsl"
-        number_of_dimensions = 2; // vec2 em "shader_vertex.glsl"
+        location = 2; 
+        number_of_dimensions = 2; 
         glVertexAttribPointer(location, number_of_dimensions, GL_FLOAT, GL_FALSE, 0, 0);
         glEnableVertexAttribArray(location);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -1309,15 +1357,9 @@ void BuildTrianglesAndAddToVirtualScene(ObjModel* model)
     GLuint indices_id;
     glGenBuffers(1, &indices_id);
 
-    // "Ligamos" o buffer. Note que o tipo agora é GL_ELEMENT_ARRAY_BUFFER.
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices_id);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint), NULL, GL_STATIC_DRAW);
     glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, indices.size() * sizeof(GLuint), indices.data());
-    // glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0); // XXX Errado!
-    //
-
-    // "Desligamos" o VAO, evitando assim que operações posteriores venham a
-    // alterar o mesmo. Isso evita bugs.
     glBindVertexArray(0);
 }
 
@@ -1366,31 +1408,11 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height)
 
 double g_LastCursorPosX, g_LastCursorPosY;
 
-void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
-{
-
-    
-
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
-    {
-
-        glfwGetCursorPos(window, &g_LastCursorPosX, &g_LastCursorPosY);
-        
-        //g_LeftMouseButtonPressed = !g_LeftMouseButtonPressed;
-        //g_LeftMouseButtonPressed = true;
-        
-    }
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE)
-    {
-
-        //g_LeftMouseButtonPressed = false;
-    }
-}
 
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 {
 
-    if (!g_LeftMouseButtonPressed)
+    if (g_paused)
         return;
 
     float dx = xpos - g_LastCursorPosX;
@@ -1421,6 +1443,11 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mod)
     if (key == GLFW_KEY_O && action == GLFW_PRESS)
     {
         g_thirdPerson = !g_thirdPerson;
+    }
+    if (key == GLFW_KEY_P && action == GLFW_PRESS)
+    {
+        g_paused_aux = true;
+        g_paused = !g_paused;
     }
 
 }

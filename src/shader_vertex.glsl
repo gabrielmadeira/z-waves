@@ -38,7 +38,6 @@ void main()
 
     texcoords = texture_coefficients;
 
-    // --------
 
     vec4 origin = vec4(0.0, 0.0, 0.0, 1.0);
     vec4 camera_position = inverse(view) * origin;
